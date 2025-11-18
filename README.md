@@ -1,6 +1,6 @@
-# AlphaGenome Real Alleles Benchmark
+# AlphaGenome QTL Validation
 
-**SUCCESS**: Using real ref/alt alleles from dbSNP gives moderate-strong correlation with QTL effects!
+**SUCCESS**: Validating AlphaGenome's regulatory predictions using real QTL data with strong correlations!
 
 ## Critical Bug Fixed
 
@@ -108,17 +108,19 @@ python scripts/03_evaluate.py --datasets caQTLs
 ## Directory Structure
 
 ```
-alphagenome_realalleles_benchmark/
+alphagenome-qtl-validation/
+├── data/
 │   ├── raw/               # Original QTL summary stats
-│   ├── processed/         # Normalized QTLs (chrom, pos, beta)
+│   ├── processed/         # Normalized QTLs with real alleles
 │   └── genome/            # Reference genome (symlink)
-├── scripts/
 ├── scripts/
 │   ├── 01_prepare_qtls.py    # Fetch real alleles from myvariant.info
 │   ├── 02_predict.py          # Score variants with AlphaGenome
-│   └── 03_evaluate.py         # Compute correlations
-│   ├── predictions/       # ISM max effects per position
-│   ├── tables/           # Correlation metrics
-│   └── plots/            # Scatter plots, distributions
-└── logs/                 # Execution logs
+│   ├── 03_evaluate.py         # Compute correlations
+│   └── 04_plots.py            # Generate visualizations
+├── results/
+│   ├── predictions/       # Variant predictions
+│   ├── tables/            # Correlation metrics
+│   └── plots/             # Scatter plots, distributions
+└── logs/                  # Execution logs
 ```

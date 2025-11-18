@@ -1,4 +1,4 @@
-# AlphaGenome Real Alleles Benchmark - Session Summary
+# AlphaGenome QTL Validation - Session Summary
 
 ## Critical Bugs Identified and Fixed
 
@@ -36,7 +36,7 @@ Even after fetching real alleles, we got r≈0 on 20 and 100 variant tests!
 
 ### Pipeline
 
-**alphagenome_realalleles_benchmark/** - Clean repository with correct approach
+**alphagenome-qtl-validation/** - Clean repository validating AlphaGenome with QTL data
 
 #### Step 1: Fetch Real Alleles (`01_prepare_qtls.py`)
 - Extract rs IDs from QTL variant names (e.g., "chr12:9436083_rs61916194")
