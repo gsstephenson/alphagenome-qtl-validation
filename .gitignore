@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+venv/
+ENV/
+env/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Data files
+*.parquet
+*.csv
+*.tsv
+*.bed
+*.fa
+*.fasta
+*.fai
+*.gtf
+*.gz
+*.feather
+
+# Large output directories
+data/raw/
+data/genome/
+results/predictions/*.parquet
+results/sequences/
+logs/*.log
+
+# Keep directory structure
+!.gitkeep
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# AlphaGenome API key
+.env
+*.key
