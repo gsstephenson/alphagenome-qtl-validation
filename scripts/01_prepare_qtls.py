@@ -143,6 +143,82 @@ def load_caQTLs(base_dir: Path) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
+def fetch_alleles_from_position(chrom: str, pos: int, assembly='GRCh38') -> dict:
+    """
+    Fetch alleles for a genomic position using Ensembl REST API.
+    Returns: {'ref': 'C', 'alt': 'T', 'rs_id': 'rs123456'} or None
+    """
+    try:
+        # Query Ensembl VEP for variants at this position
+        url = f"https://rest.ensembl.org/overlap/region/human/{chrom}:{pos}-{pos}?feature=variation"
+        response = requests.get(url, 
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            # Find variants at this exact position
+            for item in data:
+                if item.get('start') == pos and item.get('id', '').startswith('rs'):
+                    # Get alleles
+                    alleles = item.get('alleles', '').split('/')
+                    if len(alleles) >= 2:
+                        return {
+                            'ref': alleles[0],
+                            'alt': alleles[1],
+                            'rs_id': item['id']
+                        }
+        return None
+    except Exception as e:
+        return None
+
+
+def load_dsQTLs(base_dir: Path) -> pd.DataFrame:
+    """Load dsQTLs with real alleles from Ensembl REST API."""
+    txt_path = base_dir / "data/raw/dsQTLs_GSE31388/GSE31388_dsQtlTable.txt"
+    df = pd.read_csv(txt_path, sep='\t')
+    
+    print(f"Loading {len(df)} dsQTLs...")
+    print(f"Fetching alleles from Ensembl (this will take ~10-15 minutes)...")
+    
+    # Build records with real alleles
+    records = []
+    success_count = 0
+    
+    for idx, row in tqdm(df.iterrows(), total=len(df), desc="Fetching alleles"):
+        variant_id = f"dsQTL_{idx}"
+        chrom = str(row['Chr']).replace('chr', '')
+        pos = int(row['SNP'])
+        
+        # Fetch alleles from Ensembl
+        allele_info = fetch_alleles_from_position(chrom, pos)
+        
+        if allele_info:
+            ref = allele_info['ref']
+            alt = allele_info['alt']
+            success_count += 1
+        else:
+            ref, alt = 'N', 'N'
+        
+        records.append({
+            'variant_id': variant_id,
+            'chrom': chrom,
+            'pos': pos,
+            'ref': ref,
+            'alt': alt,
+            'beta': abs(float(row['Estimate'])),
+            'modality': 'DNase'
+        })
+        
+        # Rate limiting - Ensembl allows 15 requests/sec
+        time.sleep(0.07)
+    
+    print(f"\nSuccessfully fetched alleles for {success_count}/{len(df)} variants ({success_count/len(df)*100:.1f}%)")
+    
+    return pd.DataFrame(records)
+
+
 def load_eQTLs(base_dir: Path) -> pd.DataFrame:
     """Load eQTLs (similar pattern to caQTLs)."""
     csv_path = base_dir / "data/raw/caQTLs_GSE86886/eQTLs.csv"
@@ -196,6 +272,8 @@ def main():
         
         if dataset == 'caQTLs':
             df = load_caQTLs(base_dir)
+        elif dataset == 'dsQTLs':
+            df = load_dsQTLs(base_dir)
         elif dataset == 'eQTLs':
             df = load_eQTLs(base_dir)
         else:

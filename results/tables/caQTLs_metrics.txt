@@ -1,0 +1,15 @@
+caQTLs Evaluation
+============================================================
+n_variants: 3271
+spearman_r: 0.4032
+spearman_p: 3.68e-128
+pearson_r: 0.4089
+pearson_p: 4.44e-132
+
+Note: Correlating quantile_score with beta (directional effects)
+
+Score stats:
+  mean: -0.0529
+  std: 0.4178
+  range: [-0.9774, 0.9988]
+  abs_mean: 0.3708
