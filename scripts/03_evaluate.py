@@ -39,15 +39,25 @@ def main():
         # Use raw quantile_score (directional) vs beta
         # Both are directional effect sizes
         
+        # SIGN CORRECTION for hQTLs:
+        # hQTL betas use inverted convention: positive beta = alt DECREASES signal
+        # AlphaGenome: positive score = alt INCREASES activity
+        # Solution: flip hQTL beta signs to match AlphaGenome convention
+        beta_values = df['beta'].copy()
+        sign_note = ""
+        if dataset == 'hQTLs':
+            beta_values = -beta_values  # Flip sign
+            sign_note = " (hQTL betas inverted: positive beta = alt decreases signal)"
+        
         # Compute correlations
-        spearman_r, spearman_p = spearmanr(df['quantile_score'], df['beta'])
-        pearson_r, pearson_p = pearsonr(df['quantile_score'], df['beta'])
+        spearman_r, spearman_p = spearmanr(df['quantile_score'], beta_values)
+        pearson_r, pearson_p = pearsonr(df['quantile_score'], beta_values)
         
         # Print results
         print(f"\n{dataset} Results (n={len(df)}):")
         print(f"  Spearman r: {spearman_r:.4f} (p={spearman_p:.2e})")
         print(f"  Pearson r:  {pearson_r:.4f} (p={pearson_p:.2e})")
-        print(f"  Note: Correlating quantile_score with beta (directional effects)")
+        print(f"  Note: Correlating quantile_score with beta (directional effects){sign_note}")
         
         # Save
         output_path = output_dir / f"{dataset}_metrics.txt"
@@ -59,7 +69,7 @@ def main():
             f.write(f"spearman_p: {spearman_p:.2e}\n")
             f.write(f"pearson_r: {pearson_r:.4f}\n")
             f.write(f"pearson_p: {pearson_p:.2e}\n")
-            f.write(f"\nNote: Correlating quantile_score with beta (directional effects)\n")
+            f.write(f"\nNote: Correlating quantile_score with beta (directional effects){sign_note}\n")
             f.write(f"\nScore stats:\n")
             f.write(f"  mean: {df['quantile_score'].mean():.4f}\n")
             f.write(f"  std: {df['quantile_score'].std():.4f}\n")

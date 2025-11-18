@@ -37,23 +37,31 @@ def plot_correlation(df: pd.DataFrame, dataset: str, output_path: Path):
     """Create scatter plot of predictions vs QTL effects."""
     fig, ax = plt.subplots(figsize=(8, 6))
     
+    # Apply sign correction for hQTLs
+    beta_values = df['beta'].copy()
+    if dataset == 'hQTLs':
+        beta_values = -beta_values  # Flip sign for hQTLs
+    
     # Scatter plot
-    ax.scatter(df['quantile_score'], df['beta'], 
+    ax.scatter(df['quantile_score'], beta_values, 
               alpha=0.5, s=20, color='steelblue', edgecolors='none')
     
     # Regression line
-    slope, intercept, r_value, p_value, std_err = stats.linregress(df['quantile_score'], df['beta'])
+    slope, intercept, r_value, p_value, std_err = stats.linregress(df['quantile_score'], beta_values)
     x_line = np.array([df['quantile_score'].min(), df['quantile_score'].max()])
     y_line = slope * x_line + intercept
     ax.plot(x_line, y_line, 'r-', linewidth=2, label=f'Linear fit (R²={r_value**2:.3f})')
     
     # Compute correlations
-    spearman_r, spearman_p = spearmanr(df['quantile_score'], df['beta'])
-    pearson_r, pearson_p = pearsonr(df['quantile_score'], df['beta'])
+    spearman_r, spearman_p = spearmanr(df['quantile_score'], beta_values)
+    pearson_r, pearson_p = pearsonr(df['quantile_score'], beta_values)
     
     # Labels and title
     ax.set_xlabel('AlphaGenome Quantile Score', fontsize=12)
-    ax.set_ylabel('QTL Effect Size (Beta)', fontsize=12)
+    ylabel = 'QTL Effect Size (Beta)'
+    if dataset == 'hQTLs':
+        ylabel += ' [inverted]'
+    ax.set_ylabel(ylabel, fontsize=12)
     ax.set_title(f'{dataset} - AlphaGenome Predictions vs QTL Effects\n'
                 f'n={len(df):,} variants', fontsize=14, fontweight='bold')
     
@@ -82,6 +90,11 @@ def plot_distributions(df: pd.DataFrame, dataset: str, output_path: Path):
     """Plot distributions of quantile scores and betas."""
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
     
+    # Apply sign correction for hQTLs
+    beta_values = df['beta'].copy()
+    if dataset == 'hQTLs':
+        beta_values = -beta_values  # Flip sign for hQTLs
+    
     # Quantile score distribution
     ax = axes[0, 0]
     ax.hist(df['quantile_score'], bins=50, color='steelblue', alpha=0.7, edgecolor='black')
@@ -95,10 +108,13 @@ def plot_distributions(df: pd.DataFrame, dataset: str, output_path: Path):
     
     # Beta distribution
     ax = axes[0, 1]
-    ax.hist(df['beta'], bins=50, color='coral', alpha=0.7, edgecolor='black')
-    ax.axvline(df['beta'].mean(), color='red', linestyle='--', 
-              linewidth=2, label=f'Mean = {df["beta"].mean():.3f}')
-    ax.set_xlabel('QTL Beta', fontsize=11)
+    ax.hist(beta_values, bins=50, color='coral', alpha=0.7, edgecolor='black')
+    ax.axvline(beta_values.mean(), color='red', linestyle='--', 
+              linewidth=2, label=f'Mean = {beta_values.mean():.3f}')
+    xlabel = 'QTL Beta'
+    if dataset == 'hQTLs':
+        xlabel += ' [inverted]'
+    ax.set_xlabel(xlabel, fontsize=11)
     ax.set_ylabel('Count', fontsize=11)
     ax.set_title('Distribution of QTL Effect Sizes', fontsize=12, fontweight='bold')
     ax.legend()
@@ -108,7 +124,7 @@ def plot_distributions(df: pd.DataFrame, dataset: str, output_path: Path):
     ax = axes[1, 0]
     ax.hist(df['quantile_score'].abs(), bins=50, color='steelblue', 
            alpha=0.5, label='|Quantile Score|', edgecolor='black')
-    ax.hist(df['beta'], bins=50, color='coral', alpha=0.5, 
+    ax.hist(beta_values, bins=50, color='coral', alpha=0.5, 
            label='QTL Beta', edgecolor='black')
     ax.set_xlabel('Value', fontsize=11)
     ax.set_ylabel('Count', fontsize=11)
@@ -118,8 +134,9 @@ def plot_distributions(df: pd.DataFrame, dataset: str, output_path: Path):
     
     # Sign agreement
     ax = axes[1, 1]
-    df['same_sign'] = np.sign(df['quantile_score']) == np.sign(df['beta'])
-    sign_counts = df['same_sign'].value_counts()
+    df_temp = pd.DataFrame({'quantile_score': df['quantile_score'], 'beta': beta_values})
+    df_temp['same_sign'] = np.sign(df_temp['quantile_score']) == np.sign(df_temp['beta'])
+    sign_counts = df_temp['same_sign'].value_counts()
     colors = ['green' if x else 'red' for x in sign_counts.index]
     bars = ax.bar(['Same Sign', 'Opposite Sign'], 
                   [sign_counts.get(True, 0), sign_counts.get(False, 0)],
@@ -145,16 +162,25 @@ def plot_distributions(df: pd.DataFrame, dataset: str, output_path: Path):
 
 def plot_residuals(df: pd.DataFrame, dataset: str, output_path: Path):
     """Plot residual analysis."""
+    # Apply sign correction for hQTLs
+    beta_values = df['beta'].copy()
+    if dataset == 'hQTLs':
+        beta_values = -beta_values  # Flip sign for hQTLs
+    
     # Fit linear model
-    slope, intercept, r_value, p_value, std_err = stats.linregress(df['quantile_score'], df['beta'])
-    df['predicted_beta'] = slope * df['quantile_score'] + intercept
-    df['residual'] = df['beta'] - df['predicted_beta']
+    slope, intercept, r_value, p_value, std_err = stats.linregress(df['quantile_score'], beta_values)
+    df_temp = pd.DataFrame({
+        'quantile_score': df['quantile_score'],
+        'beta': beta_values,
+        'predicted_beta': slope * df['quantile_score'] + intercept
+    })
+    df_temp['residual'] = df_temp['beta'] - df_temp['predicted_beta']
     
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
     
     # Residual plot
     ax = axes[0]
-    ax.scatter(df['predicted_beta'], df['residual'], 
+    ax.scatter(df_temp['predicted_beta'], df_temp['residual'], 
               alpha=0.5, s=20, color='purple', edgecolors='none')
     ax.axhline(0, color='red', linestyle='--', linewidth=2)
     ax.set_xlabel('Predicted Beta', fontsize=11)
@@ -164,11 +190,11 @@ def plot_residuals(df: pd.DataFrame, dataset: str, output_path: Path):
     
     # Residual distribution
     ax = axes[1]
-    ax.hist(df['residual'], bins=50, color='purple', alpha=0.7, edgecolor='black')
+    ax.hist(df_temp['residual'], bins=50, color='purple', alpha=0.7, edgecolor='black')
     ax.axvline(0, color='red', linestyle='--', linewidth=2, label='Zero')
     ax.set_xlabel('Residual', fontsize=11)
     ax.set_ylabel('Count', fontsize=11)
-    ax.set_title(f'Residual Distribution\nMean = {df["residual"].mean():.4f}, Std = {df["residual"].std():.4f}', 
+    ax.set_title(f'Residual Distribution\nMean = {df_temp["residual"].mean():.4f}, Std = {df_temp["residual"].std():.4f}', 
                 fontsize=12, fontweight='bold')
     ax.legend()
     ax.grid(True, alpha=0.3)
