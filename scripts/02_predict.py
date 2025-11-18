@@ -39,27 +39,38 @@ def get_modality_scorers(variant_scorers, modalities: str):
         'RNA_SEQ': 'RNA_SEQ'
     }
     
-    scorers = []
+    # Use set to deduplicate scorer keys (e.g., H3K27ac and H3K4me1 both -> CHIP_HISTONE)
+    scorer_keys = set()
     for mod in modalities.split(','):
         mod = mod.strip()
         if mod in modality_map:
-            scorer_key = modality_map[mod]
-            scorers.append(variant_scorers.RECOMMENDED_VARIANT_SCORERS[scorer_key])
+            scorer_keys.add(modality_map[mod])
+    
+    # Get unique scorers
+    scorers = [variant_scorers.RECOMMENDED_VARIANT_SCORERS[key] for key in scorer_keys]
     
     return scorers
 
 
 def score_variants_batch(client, genome, variant_scorers_module, dna_client,
-                         variants_df: pd.DataFrame, modalities: str) -> pd.DataFrame:
+                         variants_df: pd.DataFrame, modalities: str, tissue_curie: str = None) -> pd.DataFrame:
     """
     Score variants using AlphaGenome following official batch_variant_scoring pattern.
     
     Key differences from old approach:
     1. Using REAL ref/alt alleles (not placeholders)
-    2. Proper tissue filtering to CD4+ T cells
+    2. Proper tissue filtering (CD4+ T cells for caQTLs, B cells for hQTLs)
     3. Aggregating across tracks per variant-modality pair
     """
-    CD4_T_CELL = 'CL:0000624'
+    # Tissue ontology curies
+    TISSUES = {
+        'CD4_T_CELL': 'CL:0000624',
+        'B_CELL': 'CL:0000236'
+    }
+    
+    # Default to CD4+ T cells if not specified
+    if tissue_curie is None:
+        tissue_curie = TISSUES['CD4_T_CELL']
     
     # Get scorers for requested modalities
     scorers = get_modality_scorers(variant_scorers_module, modalities)
@@ -111,13 +122,14 @@ def score_variants_batch(client, genome, variant_scorers_module, dna_client,
     print(f"  Converting {len(results)} results to tidy format...")
     df = variant_scorers_module.tidy_scores(results)
     
-    # Filter to CD4+ T cells
-    print(f"  Filtering to CD4+ T cells (before: {len(df)} rows)...")
-    df = df[df['ontology_curie'] == CD4_T_CELL].copy()
+    # Filter to specified tissue
+    tissue_name = [k for k, v in TISSUES.items() if v == tissue_curie][0]
+    print(f"  Filtering to {tissue_name} ({tissue_curie}) (before: {len(df)} rows)...")
+    df = df[df['ontology_curie'] == tissue_curie].copy()
     print(f"  After filtering: {len(df)} rows from {df['biosample_name'].nunique()} tracks")
     
     if len(df) == 0:
-        raise ValueError("No CD4+ T cell predictions found!")
+        raise ValueError(f"No {tissue_name} predictions found!")
     
     # Extract variant_id as string (it's currently a Variant object)
     df['variant_id_str'] = df['variant_id'].astype(str)
@@ -168,7 +180,7 @@ def score_variants_batch(client, genome, variant_scorers_module, dna_client,
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--datasets', nargs='+', default=['caQTLs'],
-                       choices=['caQTLs', 'dsQTLs', 'eQTLs', 'hQTLs'])
+                       choices=['caQTLs', 'hQTLs'])
     parser.add_argument('--limit', type=int, help='Test on first N variants')
     parser.add_argument('--force', action='store_true')
     args = parser.parse_args()
@@ -210,14 +222,29 @@ def main():
         print(f"  Loaded {len(variants_df)} variants")
         print(f"  Real alleles: {(variants_df['ref'] != 'N').sum()}/{len(variants_df)}")
         
-        # Get modalities (all variants in dataset have same modality)
-        modalities = variants_df['modality'].iloc[0]
+        # Determine tissue curie based on dataset
+        # caQTLs: CD4+ T cells (CL:0000624) - Nedelec et al.
+        # hQTLs: B cells (CL:0000236) - Pelikan et al. LCLs
+        tissue_curie = 'CL:0000624' if dataset == 'caQTLs' else 'CL:0000236'
         
-        # Score variants
-        predictions_df = score_variants_batch(
-            client, genome, variant_scorers, dna_client,
-            variants_df, modalities
-        )
+        # Group variants by modality (e.g., hQTLs have H3K27ac, H3K4me1, or both)
+        modality_groups = variants_df.groupby('modality')
+        print(f"  Found {len(modality_groups)} modality groups:")
+        for modality, group_df in modality_groups:
+            print(f"    - {modality}: {len(group_df)} variants")
+        
+        # Score each modality group separately
+        all_predictions = []
+        for modality, group_df in modality_groups:
+            print(f"\n  Scoring {len(group_df)} variants with modality: {modality}")
+            group_predictions = score_variants_batch(
+                client, genome, variant_scorers, dna_client,
+                group_df, modality, tissue_curie
+            )
+            all_predictions.append(group_predictions)
+        
+        # Combine predictions from all modality groups
+        predictions_df = pd.concat(all_predictions, ignore_index=True)
         
         # Save
         predictions_df.to_parquet(output_path, index=False)

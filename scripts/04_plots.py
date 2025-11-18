@@ -221,7 +221,7 @@ def plot_top_variants(df: pd.DataFrame, dataset: str, output_path: Path, n_top=2
 def main():
     parser = argparse.ArgumentParser(description='Generate plots for AlphaGenome QTL benchmark')
     parser.add_argument('--datasets', nargs='+', default=['caQTLs'],
-                       choices=['caQTLs', 'dsQTLs', 'eQTLs', 'hQTLs'])
+                       choices=['caQTLs', 'hQTLs'])
     args = parser.parse_args()
     
     base_dir = Path(__file__).parent.parent

@@ -7,8 +7,6 @@ This fixes the root cause: previous approach used placeholder A→G for all vari
 
 Input:
 - data/raw/caQTLs_GSE86886/ATAC-QTLs.csv (has rs IDs)
-- data/raw/dsQTLs_GSE31388/GSE31388_dsQtlTable.txt
-- data/raw/eQTLs_GSE86886/eQTLs.csv  
 - data/raw/hQTLs_GSE116193/Pelikan_et_al_hQTL_summary.csv
 
 Output:
@@ -143,78 +141,93 @@ def load_caQTLs(base_dir: Path) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
-def fetch_alleles_from_position(chrom: str, pos: int, assembly='GRCh38') -> dict:
-    """
-    Fetch alleles for a genomic position using Ensembl REST API.
-    Returns: {'ref': 'C', 'alt': 'T', 'rs_id': 'rs123456'} or None
-    """
-    try:
-        # Query Ensembl VEP for variants at this position
-        url = f"https://rest.ensembl.org/overlap/region/human/{chrom}:{pos}-{pos}?feature=variation"
-        response = requests.get(url, 
-            headers={"Content-Type": "application/json"},
-            timeout=10
-        )
+def load_hQTLs(base_dir: Path, limit: int = None) -> pd.DataFrame:
+    """Load hQTLs with real alleles (already in the file + fetch from API)."""
+    csv_path = base_dir / "data/raw/hQTLs_GSE116193/Pelikan_et_al_hQTL_summary.csv"
+    df = pd.read_csv(csv_path)
+    
+    if limit:
+        df = df.head(limit)
+        print(f"Testing on first {len(df)} hQTLs...")
+    else:
+        print(f"Loading {len(df)} hQTLs...")
+    
+    # hQTLs have ref/alt alleles already, but positions are hg19
+    # We'll use rs IDs to get hg38 positions from myvariant.info
+    
+    # Extract rs IDs
+    rs_ids = []
+    rs_id_map = {}
+    
+    for idx, row in df.iterrows():
+        rs_id = str(row['epiQTL rsID']).strip()
+        if rs_id.startswith('rs'):
+            variant_id = f"hQTL_{idx}"
+            rs_ids.append(rs_id)
+            rs_id_map[variant_id] = {
+                'rs_id': rs_id,
+                'chrom': str(row['Chr']),
+                'pos_hg19': int(row['Bp (hg19)']),
+                'ref': str(row['Ref Allelec']).strip(),
+                'alt': str(row['Alt Alleled']).strip(),
+                'effect_size': float(row['log2 (effect size)']),
+                'has_H3K27ac': pd.notna(row['H3K27ac p-valueb']) and row['H3K27ac p-valueb'] != '.',
+                'has_H3K4me1': pd.notna(row['H3K4me1 p-valueb']) and row['H3K4me1 p-valueb'] != '.'
+            }
+    
+    print(f"Found {len(rs_ids)} variants with rs IDs, fetching hg38 positions...")
+    
+    # Fetch hg38 positions in batches
+    batch_size = 100
+    all_positions = {}
+    
+    for i in tqdm(range(0, len(rs_ids), batch_size), desc="Fetching hg38 positions"):
+        batch = rs_ids[i:i+batch_size]
+        alleles = fetch_alleles_batch(batch, assembly='hg38')
         
-        if response.status_code == 200:
-            data = response.json()
-            # Find variants at this exact position
-            for item in data:
-                if item.get('start') == pos and item.get('id', '').startswith('rs'):
-                    # Get alleles
-                    alleles = item.get('alleles', '').split('/')
-                    if len(alleles) >= 2:
-                        return {
-                            'ref': alleles[0],
-                            'alt': alleles[1],
-                            'rs_id': item['id']
-                        }
-        return None
-    except Exception as e:
-        return None
-
-
-def load_dsQTLs(base_dir: Path) -> pd.DataFrame:
-    """Load dsQTLs with real alleles from Ensembl REST API."""
-    txt_path = base_dir / "data/raw/dsQTLs_GSE31388/GSE31388_dsQtlTable.txt"
-    df = pd.read_csv(txt_path, sep='\t')
+        for rs_id, info in alleles.items():
+            if 'pos' in info and info['pos']:
+                all_positions[rs_id] = {
+                    'chrom': info.get('chrom'),
+                    'pos_hg38': info['pos']
+                }
+        
+        time.sleep(0.5)
     
-    print(f"Loading {len(df)} dsQTLs...")
-    print(f"Fetching alleles from Ensembl (this will take ~10-15 minutes)...")
+    print(f"Successfully fetched hg38 positions for {len(all_positions)}/{len(rs_ids)} variants ({len(all_positions)/len(rs_ids)*100:.1f}%)")
     
-    # Build records with real alleles
+    # Build records
     records = []
-    success_count = 0
-    
-    for idx, row in tqdm(df.iterrows(), total=len(df), desc="Fetching alleles"):
-        variant_id = f"dsQTL_{idx}"
-        chrom = str(row['Chr']).replace('chr', '')
-        pos = int(row['SNP'])
+    for variant_id, info in rs_id_map.items():
+        rs_id = info['rs_id']
         
-        # Fetch alleles from Ensembl
-        allele_info = fetch_alleles_from_position(chrom, pos)
-        
-        if allele_info:
-            ref = allele_info['ref']
-            alt = allele_info['alt']
-            success_count += 1
+        # Use hg38 position if available, otherwise keep hg19
+        if rs_id in all_positions:
+            chrom = all_positions[rs_id]['chrom']
+            pos = all_positions[rs_id]['pos_hg38']
         else:
-            ref, alt = 'N', 'N'
+            chrom = info['chrom']
+            pos = info['pos_hg19']
+        
+        # Determine which modality to use
+        modalities = []
+        if info['has_H3K27ac']:
+            modalities.append('H3K27ac')
+        if info['has_H3K4me1']:
+            modalities.append('H3K4me1')
+        
+        if not modalities:
+            continue  # Skip if no significant QTL
         
         records.append({
             'variant_id': variant_id,
             'chrom': chrom,
             'pos': pos,
-            'ref': ref,
-            'alt': alt,
-            'beta': abs(float(row['Estimate'])),
-            'modality': 'DNase'
+            'ref': info['ref'],
+            'alt': info['alt'],
+            'beta': info['effect_size'],  # Directional log2 fold change (preserve sign)
+            'modality': ','.join(modalities)
         })
-        
-        # Rate limiting - Ensembl allows 15 requests/sec
-        time.sleep(0.07)
-    
-    print(f"\nSuccessfully fetched alleles for {success_count}/{len(df)} variants ({success_count/len(df)*100:.1f}%)")
     
     return pd.DataFrame(records)
 
@@ -258,7 +271,9 @@ def load_eQTLs(base_dir: Path) -> pd.DataFrame:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--datasets', nargs='+', default=['caQTLs'],
-                       choices=['caQTLs', 'dsQTLs', 'eQTLs', 'hQTLs'])
+                       choices=['caQTLs', 'hQTLs'])
+    parser.add_argument('--limit', type=int, default=None,
+                       help='Test on first N variants only')
     args = parser.parse_args()
     
     base_dir = Path(__file__).parent.parent
@@ -272,10 +287,8 @@ def main():
         
         if dataset == 'caQTLs':
             df = load_caQTLs(base_dir)
-        elif dataset == 'dsQTLs':
-            df = load_dsQTLs(base_dir)
-        elif dataset == 'eQTLs':
-            df = load_eQTLs(base_dir)
+        elif dataset == 'hQTLs':
+            df = load_hQTLs(base_dir, limit=args.limit)
         else:
             print(f"  {dataset} not yet implemented")
             continue
