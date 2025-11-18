@@ -1,130 +1,126 @@
-# AlphaGenome QTL Validation - Session Summary
+# AlphaGenome QTL Validation - My Development Notes
 
-## Critical Bugs Identified and Fixed
+**Author**: George Stephenson  
+**Lab**: LAYER Lab, CU Boulder
 
-### Bug #1: Placeholder Alleles (alphagenome_phase3_qtl_benchmark)
+## My Project Goal
 
-After a week of attempts, we discovered the ROOT CAUSE of zero correlations:
+I'm validating AlphaGenome's regulatory variant effect predictions using chromatin accessibility QTLs (caQTLs) and histone modification QTLs (hQTLs).
 
-**All 15,647 variants were using placeholder alleles (A→G) instead of real ref/alt bases.**
+## Critical Issues Resolved
 
-#### Evidence:
-```python
-# From 00_normalize.py:
-ref='A',  # placeholder - would need VCF to get real alleles  
-alt='G'
+### Issue #1: Placeholder Alleles (Week of Debugging!)
 
-# Example: Actual genome at chr12:9436083 = T (not A!)
-# Script was scoring T→G when real QTL variant was T→C
-```
+My previous approach (`alphagenome_phase3_qtl_benchmark`) used placeholder A→G alleles for all 15,647 variants, resulting in r≈0.03 after a WEEK of failed attempts.
 
-**Result**: Scoring completely wrong molecular events → r≈0.03
+**What I did wrong**: Scored wrong molecular changes (e.g., T→G instead of actual T→C variant)
 
-### Bug #2: Absolute Value Correlation (Initial Implementation)
+**How I fixed it**: Fetch real alleles from dbSNP using rs IDs in QTL summary statistics
 
-Even after fetching real alleles, we got r≈0 on 20 and 100 variant tests!
+**Result**: r=0.40 for caQTLs (13x improvement!)
 
-**Mistake**: Used `|quantile_score|` vs `beta` correlation
-- Assumption: "QTL betas are magnitudes (always positive), so use absolute value"
-- Reality: Both quantile_score AND beta are directional effects
-- Using abs() destroyed the correlation: r=-0.06
+### Issue #2: Directional Effects
 
-**Fix**: Use raw `quantile_score` vs `beta` (both directional)
-- Result: r=0.47 (Spearman), r=0.54 (Pearson) on 100 variants ✅
+Even with real alleles, my initial tests still showed r≈0 due to using absolute value correlation.
 
-## Solution: Real Alleles + Directional Correlation
+**What I did wrong**: Used `|quantile_score|` vs `beta`, destroying directional signal
 
-### Pipeline
+**How I fixed it**: Use raw quantile_score vs beta (both are directional effects)
 
-**alphagenome-qtl-validation/** - Clean repository validating AlphaGenome with QTL data
+**Result**: Proper correlation capturing increase/decrease in chromatin accessibility
 
-#### Step 1: Fetch Real Alleles (`01_prepare_qtls.py`)
-- Extract rs IDs from QTL variant names (e.g., "chr12:9436083_rs61916194")
-- Query myvariant.info API in batches of 100
-- **Success rate: 98.7% (3274/3317 caQTLs)**
-- Output: Real ref/alt alleles from dbSNP
+## Validated Datasets
 
-Example:
-```
-rs61916194 → chr12:9283487 C→T (REAL alleles, not placeholder A→G!)
-```
+### caQTLs (Chromatin Accessibility)
+- Source: Nedelec et al., GSE86886, CD4+ T cells
+- Variants: 3,271 with real alleles (98.7% success rate)
+- Modalities: ATAC-seq, DNase-seq, H3K27ac ChIP-seq
+- Tissue filter: CD4+ T cells (CL:0000624)
+- **Results**: r=0.4032 (Spearman), r=0.4089 (Pearson), p < 10⁻¹²⁸
+
+### hQTLs (Histone Modifications)  
+- Source: Pelikan et al., GSE116193, lymphoblastoid cell lines
+- Variants: 6,259 with real alleles (99.97% success rate)
+- Modalities: H3K27ac and/or H3K4me1 ChIP-seq
+- Tissue filter: B cells (CL:0000236)
+- **Results**: In progress... ⏳
+
+### dsQTLs (DNA Shape) - FAILED
+- Source: GSE31388 (2012 dataset)
+- Attempted: 6,070 variants
+- **Result**: 0% success - hg19 positions not in modern dbSNP
+- **Lesson**: Old datasets (pre-2015) often lack annotations needed for allele fetching
+- **Status**: Skipped, but script still supports it if I find better data
 
 #### Step 2: Score with AlphaGenome (`02_predict.py`)
 - Follows official `batch_variant_scoring.ipynb` pattern exactly
-- Uses REAL ref/alt alleles (not placeholders!)
-- Filters to CD4+ T cells (`CL:0000624`) - matches QTL source tissue
-- Aggregates across tracks: mean quantile_score
-- Speed: ~1.4 variants/sec
+## Implementation Details
 
-#### Step 3: Evaluate (`03_evaluate.py`)
-- Correlate **quantile_score vs beta** (directional, NOT absolute value!)
-- Report Spearman/Pearson r with p-values
+### Allele Fetching
+- API: myvariant.info with hg38 assembly
+- Batch size: 100 variants per request
+- Rate limiting: 0.5 sec between batches
+- Handles multi-allelic sites (takes first alt allele)
 
-## Results
+### Tissue-Matched Scoring
+- caQTLs: CD4+ T cells (CL:0000624) - matches Nedelec et al. source
+- hQTLs: B cells (CL:0000236) - LCLs are immortalized B cells
+- Filters AlphaGenome predictions to tissue-specific tracks only
 
-### Test Run (100 variants)
-```
-Spearman r: 0.4652 (p=1.23e-06) ✅
-Pearson r:  0.5369 (p=1.01e-08) ✅
-```
+### Modality Handling
+- Deduplicates scorers for multi-modality variants
+- Example: H3K27ac,H3K4me1 → single CHIP_HISTONE scorer (not duplicate)
+- Groups variants by modality before scoring
 
-**This is moderate-strong correlation - exactly what we expect for real biological data!**
-
-### Previous Approaches (FAILED)
-```
-Phase 3 with placeholder A→G alleles (3277 variants):
-  Spearman r: 0.029 (near zero)
-
-Real alleles + absolute value correlation (100 variants):
-  Spearman r: -0.0587 (near zero)
-```
-
-### Improvement Timeline:
-- Placeholder alleles: r=0.03
-- Real alleles + |abs| correlation: r=-0.06 (still broken!)
-- Real alleles + directional correlation: **r=0.47** ✅
-
-## Current Status
-
-✅ Data preparation complete (3317 caQTLs with 98.7% real alleles)
-✅ Prediction script working correctly with real alleles
-✅ Evaluation fixed to use directional correlation
-✅ Test run (100 variants) shows strong correlation (r=0.47, p<1e-6)
-🔄 **Ready for full 3317 variant run** (~40 minutes estimated)
+### Evaluation
+- Directional correlation: quantile_score vs beta (both signed effects)
+- Reports: Spearman r (rank), Pearson r (linear), p-values
 
 ## Key Lessons
 
 1. **Always verify input data matches model expectations**
-   - Placeholder values silently produce meaningless results
-   - Check sequence extraction matches expected alleles
+   - I wasted a WEEK using placeholder alleles that produced meaningless results
+   - Always fetch real alleles from reference databases
 
 2. **Understand your evaluation metrics**
-   - QTL betas are NOT just magnitudes - they have direction
-   - Using absolute value when both variables are directional destroys signal
+   - QTL betas are directional (increase/decrease chromatin state)
+   - I mistakenly used absolute value which destroyed biological signal
 
-3. **Systematic debugging with increasing sample sizes**
+3. **Tissue matching is critical**
+   - Regulatory effects are highly tissue-specific
+   - I must filter to source cell type for accurate predictions
+
+4. **Handle multi-modality variants correctly**
+   - Some variants affect multiple related marks (H3K27ac + H3K4me1)
+   - I had to deduplicate scorers to avoid API errors
+
+5. **Systematic debugging with increasing sample sizes**
    - Small samples (n=5) can show spurious correlations
-   - Test on n=20, 100 before running full dataset
+   - I now test on n=20, 100 before running full dataset
 
-2. **Read official examples carefully**
-   - batch_variant_scoring.ipynb shows correct pattern
-   - Tissue filtering is critical (CD4+ T cells)
+6. **Read official examples carefully**
+   - batch_variant_scoring.ipynb showed me the correct pattern
+   - Tissue filtering turned out to be critical
 
-3. **Simplify when stuck**
-   - ISM approach was too complex
-   - Real alleles from API was simpler solution
+7. **Simplify when stuck**
+   - My ISM approach was too complex
+   - Real alleles from API was the simpler solution
 
-## Next Steps
+8. **Old datasets can be problematic**
+   - 2012 dsQTL dataset lacked modern dbSNP annotations
+   - Pre-2015 data often can't be used with current pipelines
 
-1. Wait for full caQTLs run to complete (~1 hour)
-2. Evaluate final correlations
-3. If r>0.3: Extend to dsQTLs, eQTLs, hQTLs  
-4. Generate plots and final benchmark report
+## My Next Steps
+
+1. ✅ caQTLs complete: r=0.40 (SUCCESS!)
+2. ⏳ hQTLs running in background (~1.5 hours)
+3. ❌ dsQTLs failed (old dataset, skipped)
+4. Generate final plots and benchmark report
 
 ## Directory Structure
 
 ```
-alphagenome_ISM_benchmark/
+alphagenome-qtl-validation/
 ├── data/
 │   ├── raw/               # Original QTL files  
 │   └── processed/         # With REAL alleles from API
@@ -138,14 +134,14 @@ alphagenome_ISM_benchmark/
 └── logs/                 # Execution logs
 ```
 
-## Commands
+## My Commands
 
 ```bash
 # Prepare data with real alleles
-python scripts/01_prepare_qtls.py --datasets caQTLs
+python scripts/01_prepare_qtls.py --datasets caQTLs hQTLs
 
-# Run predictions (background)
-nohup python scripts/02_predict.py --datasets caQTLs --force > logs/predict.log 2>&1 &
+# Run predictions
+python scripts/02_predict.py --datasets caQTLs hQTLs --force
 
 # Evaluate  
 python scripts/03_evaluate.py --datasets caQTLs
