@@ -1,7 +1,7 @@
 # Independent Validation of AlphaGenome Using Molecular Quantitative Trait Loci
 
 **George Stephenson**  
-LAYER Lab, Department of Computer Science  
+Layer Lab, Department of Computer Science  
 University of Colorado Boulder  
 November 2025
 
